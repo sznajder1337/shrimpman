@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>WizardShrimp — Pac-man with wizard and shrimps</title>
+<style>
+  :root{--bg:#071020;--wall:#0f1724;--tile:#081226;--pellet:#ffd166;--wizard:#8b5cf6;--shrimp:#ff5c7c}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:linear-gradient(180deg,#041021,#081726);color:#dbeafe;font-family:Inter, system-ui, Arial, sans-serif;display:flex;align-items:center;justify-content:center;padding:18px}
+  .card{width:960px;max-width:100%;background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));border-radius:12px;padding:14px;box-shadow:0 10px 30px rgba(2,6,23,0.6)}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  h1{font-size:18px;margin:0}
+  .hud{display:flex;gap:10px;align-items:center}
+  .pill{background:rgba(255,255,255,0.03);padding:6px 10px;border-radius:999px;font-weight:600}
+  canvas{display:block;border-radius:10px;background:var(--tile);width:100%;height:auto}
+  .controls{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .btn{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.03);padding:8px 12px;border-radius:8px;cursor:pointer}
+  footer{font-size:12px;opacity:.7;margin-top:8px}
+</style>
+</head>
+<body>
+  <div class="card">
+    <header>
+      <h1>WizardShrimp — Pacman: Wizard vs Shrimps</h1>
+      <div class="hud">
+        <div class="pill" id="score">Score: 0</div>
+        <div class="pill" id="lives">Lives: 3</div>
+      </div>
+    </header>
+
+    <canvas id="game" width="800" height="896" aria-label="WizardShrimp game"></canvas>
+
+    <div class="controls">
+      <button class="btn" id="restart">Restart</button>
+      <div style="opacity:.85">Controls: arrows / WASD</div>
+    </div>
+
+    <footer>Single-file game — save as <code>wizardshrimp.html</code> and open in browser.</footer>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    alert('Error: Cannot initialize canvas context!');
+    return;
+  }
+  const scoreEl = document.getElementById('score');
+  const livesEl = document.getElementById('lives');
+
+  const MAP_ORIG = [
+    '############################',
+    '#............##............#',
+    '#.####.#####.##.#####.####.#',
+    '#o####.#####.##.#####.####o#',
+    '#.####.#####.##.#####.####.#',
+    '#..........................#',
+    '#.####.##.########.##.####.#',
+    '#.####.##.########.##.####.#',
+    '#......##....##....##......#',
+    '######.##### ## #####.######',
+    '######.##### ## #####.######',
+    '######.##          ##.######',
+    '######.## ###==### ##.######',
+    '######.## #      # ##.######',
+    '######.## #      # ##.######',
+    '######.## ###==### ##.######',
+    '######.##          ##.######',
+    '######.## ######## ##.######',
+    '#............##............#',
+    '#.####.#####.##.#####.####.#',
+    '#.####.#####.##.#####.####.#',
+    '#o..##................##..o#',
+    '###.##.##.########.##.##.###',
+    '###.##.##.########.##.##.###',
+    '#......##....##....##......#',
+    '#.##########.##.##########.#',
+    '#.##########.##.##########.#',
+    '#..........................#',
+    '############################'
+  ];
+
+  let MAP = MAP_ORIG.slice();
+
+  const WIDTH = MAP[0].length;
+  const HEIGHT = MAP.length;
+  let TILE = 28, OFFSET_X = 0, OFFSET_Y = 0;
+
+  function resizeCanvas(){
+    canvas.width = 800; canvas.height = 896;
+    TILE = Math.floor(Math.min(canvas.width / WIDTH, canvas.height / HEIGHT));
+    OFFSET_X = Math.floor((canvas.width - TILE * WIDTH) / 2);
+    OFFSET_Y = Math.floor((canvas.height - TILE * HEIGHT) / 2);
+  }
+  resizeCanvas();
+
+  // player (start in bottom left corner)
+  const playerStart = {x:1, y:27};
+  const player = {x:0,y:0,dir:{x:0,y:0},pending:{x:0,y:0},speed:2};
+  let score = 0, lives = 3;
+  let gameState = 'playing'; // 'playing' | 'gameover'
+  let powerMode = 0; // power mode time in ms
+  let poweredUp = false;
+
+  // enemies
+  const enemies = [];
+  const enemyStarts = [
+    {x: 12, y: 12},
+    {x: 15, y: 12},
+    {x: 12, y: 15},
+    {x: 15, y: 15}
+  ];
+  function spawnEnemies() {
+    enemies.length = 0;
+    for (const s of enemyStarts) {
+      enemies.push({
+        x: OFFSET_X + s.x*TILE+TILE/2,
+        y: OFFSET_Y + s.y*TILE+TILE/2,
+        dir: {x:0,y:0},
+        speed: 0.8
+      });
+    }
+  }
+
+  function resetGame() {
+    MAP = MAP_ORIG.map(r=>r.slice());
+    player.x = OFFSET_X + playerStart.x*TILE+TILE/2;
+    player.y = OFFSET_Y + playerStart.y*TILE+TILE/2;
+    player.dir = {x:0,y:0};
+    player.pending = {x:0,y:0};
+    score = 0;
+    lives = 3;
+    powerMode = 0;
+    poweredUp = false;
+    gameState = 'playing';
+    spawnEnemies();
+    console.log('Game reset, player position:', player.x, player.y);
+  }
+  resetGame();
+
+  function drawMap() {
+    for (let y = 0; y < HEIGHT; y++) {
+      for (let x = 0; x < WIDTH; x++) {
+        const tile = MAP[y][x];
+        const cx = OFFSET_X + x * TILE;
+        const cy = OFFSET_Y + y * TILE;
+        if (tile === '#') {
+          ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--wall');
+          ctx.fillRect(cx, cy, TILE, TILE);
+        } else if (tile === '.') {
+          ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--pellet');
+          ctx.beginPath();
+          ctx.arc(cx + TILE/2, cy + TILE/2, TILE*0.1, 0, Math.PI*2);
+          ctx.fill();
+        } else if (tile === 'o') {
+          ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--pellet');
+          ctx.beginPath();
+          ctx.arc(cx + TILE/2, cy + TILE/2, TILE*0.25, 0, Math.PI*2);
+          ctx.fill();
+        }
+      }
+    }
+    ctx.save();
+    ctx.font = `${TILE*2}px Inter, sans-serif`;
+    ctx.fillStyle = "#ffffff15";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("ANOMA", canvas.width/2, canvas.height/2);
+    ctx.restore();
+  }
+
+  function drawPlayer() {
+    ctx.save();
+    ctx.translate(player.x, player.y);
+    // Red hat/triangle
+    ctx.fillStyle = '#ff0000';
+    ctx.beginPath();
+    ctx.moveTo(0, -TILE*0.4);
+    ctx.lineTo(-TILE*0.4, TILE*0.2);
+    ctx.lineTo(TILE*0.4, TILE*0.2);
+    ctx.closePath();
+    ctx.fill();
+    // Black body (bottom part)
+    ctx.fillStyle = '#000000';
+    ctx.beginPath();
+    ctx.ellipse(0, TILE*0.25, TILE*0.35, TILE*0.2, 0, 0, Math.PI*2);
+    ctx.fill();
+    // Green eyes on black body
+    ctx.fillStyle = '#00ff00';
+    ctx.beginPath();
+    ctx.arc(-TILE*0.15, TILE*0.2, TILE*0.08, 0, Math.PI*2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(TILE*0.15, TILE*0.2, TILE*0.08, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+    console.log('Drawing wizard at:', player.x, player.y, 'Game state:', gameState);
+  }
+
+  function drawShrimp(px, py, color) {
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, TILE*0.35, TILE*0.22, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(-TILE*0.3, 0, TILE*0.15, TILE*0.15, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle = '#fff8';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(TILE*0.2, -TILE*0.1);
+    ctx.lineTo(TILE*0.4, -TILE*0.3);
+    ctx.moveTo(TILE*0.2, TILE*0.1);
+    ctx.lineTo(TILE*0.4, TILE*0.3);
+    ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(TILE*0.1, -TILE*0.05, TILE*0.06, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.arc(TILE*0.1, -TILE*0.05, TILE*0.03, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawGameOver() {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#fff';
+    ctx.font = `${TILE*1.5}px Inter, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const message = lives <= 0 ? `Game Over! Score: ${score}` : `Congratulations! You won with score: ${score}`;
+    ctx.fillText(message, canvas.width/2, canvas.height/2 - TILE);
+    ctx.fillText('Press Restart to play again', canvas.width/2, canvas.height/2 + TILE);
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowUp' || e.key === 'w') player.pending = {x:0,y:-1};
+    if (e.key === 'ArrowDown' || e.key === 's') player.pending = {x:0,y:1};
+    if (e.key === 'ArrowLeft' || e.key === 'a') player.pending = {x:-1,y:0};
+    if (e.key === 'ArrowRight' || e.key === 'd') player.pending = {x:1,y:0};
+  });
+
+  function tileCoord(px,py){
+    return {
+      col: Math.floor((px - OFFSET_X)/TILE),
+      row: Math.floor((py - OFFSET_Y)/TILE)
+    };
+  }
+
+  function updatePlayer() {
+    if (gameState !== 'playing') return;
+    const {col,row} = tileCoord(player.x,player.y);
+    const cx = OFFSET_X + col*TILE + TILE/2;
+    const cy = OFFSET_Y + row*TILE + TILE/2;
+    const nearCenter = Math.abs(player.x-cx)<2 && Math.abs(player.y-cy)<2;
+
+    if (nearCenter) {
+      if (player.pending.x||player.pending.y) {
+        const nx = col+player.pending.x, ny = row+player.pending.y;
+        if (MAP[ny] && MAP[ny][nx] !== '#') player.dir = player.pending;
+      }
+      const nx = col+player.dir.x, ny = row+player.dir.y;
+      if (MAP[ny] && MAP[ny][nx] === '#') player.dir={x:0,y:0};
+    }
+
+    player.x += player.dir.x*player.speed;
+    player.y += player.dir.y*player.speed;
+
+    if (player.x < OFFSET_X) player.x = OFFSET_X+WIDTH*TILE-TILE/2;
+    if (player.x > OFFSET_X+WIDTH*TILE) player.x = OFFSET_X+TILE/2;
+    if (player.y < OFFSET_Y) player.y = OFFSET_Y+TILE/2;
+    if (player.y > OFFSET_Y+HEIGHT*TILE) player.y = OFFSET_Y+HEIGHT*TILE-TILE/2;
+
+    if (nearCenter) {
+      if (MAP[row] && MAP[row][col] === '.') {
+        MAP[row] = MAP[row].substring(0,col)+' '+MAP[row].substring(col+1);
+        score+=10;
+      } else if (MAP[row] && MAP[row][col] === 'o') {
+        MAP[row] = MAP[row].substring(0,col)+' '+MAP[row].substring(col+1);
+        score+=50;
+        powerMode = 7000;
+        poweredUp = true;
+      }
+    }
+  }
+
+  function updateEnemies() {
+    if (gameState !== 'playing') return;
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      const {col,row} = tileCoord(e.x,e.y);
+      const cx = OFFSET_X+col*TILE+TILE/2;
+      const cy = OFFSET_Y+row*TILE+TILE/2;
+      const nearCenter = Math.abs(e.x-cx)<2 && Math.abs(e.y-cy)<2;
+      if (nearCenter) {
+        const dirs = [
+          {x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}
+        ].filter(d => {
+          if (d.x === -e.dir.x && d.y === -e.dir.y) return false;
+          if (!MAP[row+d.y] || MAP[row+d.y][col+d.x] === '#') return false;
+          const nextX = OFFSET_X + (col+d.x)*TILE + TILE/2;
+          const nextY = OFFSET_Y + (row+d.y)*TILE + TILE/2;
+          for (let j = 0; j < enemies.length; j++) {
+            if (j === i) continue;
+            const other = enemies[j];
+            const dist = Math.hypot(nextX - other.x, nextY - other.y);
+            if (dist < TILE * 0.6) return false;
+          }
+          return true;
+        });
+        if (dirs.length) {
+          let bestDir = dirs[Math.floor(Math.random()*dirs.length)];
+          let minDist = Infinity;
+          const playerPos = tileCoord(player.x, player.y);
+          for (const d of dirs) {
+            const dist = Math.hypot((col+d.x) - playerPos.col, (row+d.y) - playerPos.row);
+            if (dist < minDist) {
+              minDist = dist;
+              bestDir = d;
+            }
+          }
+          e.dir = bestDir;
+        } else {
+          e.dir = {x:0,y:0};
+        }
+      }
+      e.x += e.dir.x*e.speed;
+      e.y += e.dir.y*e.speed;
+
+      if (e.x < OFFSET_X) e.x = OFFSET_X+WIDTH*TILE-TILE/2;
+      if (e.x > OFFSET_X+WIDTH*TILE) e.x = OFFSET_X+TILE/2;
+    }
+  }
+
+  function checkCollisions() {
+    if (gameState !== 'playing') return;
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      const dx = player.x-e.x;
+      const dy = player.y-e.y;
+      if (Math.hypot(dx,dy) < TILE*0.6) {
+        if (poweredUp) {
+          score += 200;
+          e.x = OFFSET_X + enemyStarts[i].x*TILE+TILE/2;
+          e.y = OFFSET_Y + enemyStarts[i].y*TILE+TILE/2;
+          e.dir = {x:0,y:0};
+        } else {
+          lives--;
+          player.x = OFFSET_X + playerStart.x*TILE+TILE/2;
+          player.y = OFFSET_Y + playerStart.y*TILE+TILE/2;
+          player.dir={x:0,y:0};
+          if (lives<=0) {
+            gameState = 'gameover';
+            console.log('Game over, state:', gameState);
+          }
+        }
+      }
+    }
+  }
+
+  function checkWinCondition() {
+    if (gameState !== 'playing') return;
+    const hasPellets = MAP.some(row => row.includes('.') || row.includes('o'));
+    if (!hasPellets) {
+      gameState = 'gameover';
+      console.log('Win, state:', gameState);
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    drawMap();
+    drawPlayer();
+    for (const e of enemies) {
+      const color = poweredUp ? '#60a5fa' : getComputedStyle(document.documentElement).getPropertyValue('--shrimp');
+      drawShrimp(e.x, e.y, color);
+    }
+    if (gameState === 'gameover') {
+      drawGameOver();
+    }
+    // Add "created by chessman" text in bottom-right corner
+    ctx.save();
+    ctx.fillStyle = '#dbeafe';
+    ctx.font = '10px Inter, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'bottom';
+    ctx.globalAlpha = 0.5; // Subtle opacity
+    ctx.fillText('created by chessman', canvas.width - 10, canvas.height - 10);
+    ctx.restore();
+    scoreEl.textContent="Score: "+score;
+    livesEl.textContent="Lives: "+lives;
+    console.log('Game state:', gameState, 'Player position:', player.x, player.y);
+  }
+
+  function loop(timestamp) {
+    if (powerMode > 0) {
+      powerMode -= 16.67;
+      if (powerMode <= 0) {
+        poweredUp = false;
+      }
+    }
+    updatePlayer();
+    checkWinCondition();
+    updateEnemies();
+    checkCollisions();
+    draw();
+    requestAnimationFrame(loop);
+  }
+  loop();
+
+  document.getElementById('restart').addEventListener('click', resetGame);
+})();
+</script>
+</body>
+</html>
